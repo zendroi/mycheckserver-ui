@@ -1,4 +1,4 @@
-import db from '../config/database.js';
+import { poolPromise } from '../config/db.js';
 import { sendEmail } from './emailService.js';
 
 const DAILY_REPORT_HOURS = [8, 14, 20]; // Kirim report jam 8 pagi, 2 siang, 8 malam
@@ -24,7 +24,7 @@ export const checkServer = async (server) => {
     clearTimeout(timeout);
     responseTime = Date.now() - startTime;
     statusCode = response.status;
-    
+
     if (response.ok || response.status < 400) {
       status = 'up';
       message = 'Server responding normally';
@@ -38,17 +38,28 @@ export const checkServer = async (server) => {
     message = error.name === 'AbortError' ? 'Connection timeout' : error.message;
   }
 
-  db.prepare(`
-    INSERT INTO server_logs (server_id, status_code, response_time, status, message)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(server.id, statusCode, responseTime, status, message);
+  const pool = await poolPromise;
+  await pool.request()
+    .input('serverId', server.id)
+    .input('statusCode', statusCode)
+    .input('responseTime', responseTime)
+    .input('status', status)
+    .input('message', message)
+    .query(`
+      INSERT INTO server_logs (server_id, status_code, response_time, status, message)
+      VALUES (@serverId, @statusCode, @responseTime, @status, @message)
+    `);
 
   const previousStatus = server.status;
-  
-  db.prepare(`
-    UPDATE servers SET status = ?, response_time = ?, last_check = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(status, responseTime, server.id);
+
+  await pool.request()
+    .input('status', status)
+    .input('responseTime', responseTime)
+    .input('id', server.id)
+    .query(`
+      UPDATE servers SET status = @status, response_time = @responseTime, last_check = GETDATE(), updated_at = GETDATE()
+      WHERE id = @id
+    `);
 
   if (previousStatus === 'up' && status === 'down') {
     await sendDownNotification(server);
@@ -60,14 +71,24 @@ export const checkServer = async (server) => {
 };
 
 const sendDownNotification = async (server) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(server.user_id);
+  const pool = await poolPromise;
+  const userResult = await pool.request()
+    .input('userId', server.user_id)
+    .query('SELECT * FROM users WHERE id = @userId');
+
+  const user = userResult.recordset[0];
   if (!user) return;
 
-  db.prepare(`
-    INSERT INTO notifications (user_id, server_id, type, title, message)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(user.id, server.id, 'server_down', `Server ${server.name} DOWN!`, 
-    `Server ${server.name} (${server.domain}) tidak dapat dijangkau.`);
+  await pool.request()
+    .input('userId', user.id)
+    .input('serverId', server.id)
+    .input('type', 'server_down')
+    .input('title', `Server ${server.name} DOWN!`)
+    .input('message', `Server ${server.name} (${server.domain}) tidak dapat dijangkau.`)
+    .query(`
+      INSERT INTO notifications (user_id, server_id, type, title, message)
+      VALUES (@userId, @serverId, @type, @title, @message)
+    `);
 
   if (server.email_notif && user.email_verified) {
     await sendEmail(user.email, `⚠️ Server DOWN: ${server.name}`, `
@@ -84,14 +105,24 @@ const sendDownNotification = async (server) => {
 };
 
 const sendUpNotification = async (server) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(server.user_id);
+  const pool = await poolPromise;
+  const userResult = await pool.request()
+    .input('userId', server.user_id)
+    .query('SELECT * FROM users WHERE id = @userId');
+
+  const user = userResult.recordset[0];
   if (!user) return;
 
-  db.prepare(`
-    INSERT INTO notifications (user_id, server_id, type, title, message)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(user.id, server.id, 'server_up', `Server ${server.name} UP!`, 
-    `Server ${server.name} (${server.domain}) sudah kembali online.`);
+  await pool.request()
+    .input('userId', user.id)
+    .input('serverId', server.id)
+    .input('type', 'server_up')
+    .input('title', `Server ${server.name} UP!`)
+    .input('message', `Server ${server.name} (${server.domain}) sudah kembali online.`)
+    .query(`
+      INSERT INTO notifications (user_id, server_id, type, title, message)
+      VALUES (@userId, @serverId, @type, @title, @message)
+    `);
 
   if (server.email_notif && user.email_verified) {
     await sendEmail(user.email, `✅ Server UP: ${server.name}`, `
@@ -108,18 +139,23 @@ const sendUpNotification = async (server) => {
 
 export const runMonitoringCycle = async () => {
   const now = new Date();
-  const servers = db.prepare(`
-    SELECT s.*, u.plan FROM servers s
-    JOIN users u ON s.user_id = u.id
-    WHERE (s.last_check IS NULL OR 
-      datetime(s.last_check, '+' || s.interval || ' minutes') <= datetime('now'))
-  `).all();
+  const pool = await poolPromise;
+
+  const serversResult = await pool.request()
+    .query(`
+      SELECT s.*, u.plan FROM servers s
+      JOIN users u ON s.user_id = u.id
+      WHERE (s.last_check IS NULL OR 
+        DATEADD(minute, s.interval, s.last_check) <= GETDATE())
+    `);
+
+  const servers = serversResult.recordset;
 
   for (const server of servers) {
     if (server.plan === 'free' && server.interval < 5) {
       continue;
     }
-    
+
     try {
       await checkServer(server);
     } catch (error) {
@@ -130,7 +166,7 @@ export const runMonitoringCycle = async () => {
   // Check if it's time for daily status report
   const currentHour = now.getHours();
   const currentMinute = now.getMinutes();
-  
+
   if (DAILY_REPORT_HOURS.includes(currentHour) && currentMinute === 0) {
     await sendDailyStatusReport();
   }
@@ -138,18 +174,24 @@ export const runMonitoringCycle = async () => {
 
 export const sendDailyStatusReport = async () => {
   console.log('Sending daily status report...');
-  
-  const users = db.prepare(`
-    SELECT DISTINCT u.* FROM users u
-    JOIN servers s ON s.user_id = u.id
-    JOIN notification_settings ns ON ns.user_id = u.id
-    WHERE ns.daily_summary = 1 OR u.plan = 'pro'
-  `).all();
+  const pool = await poolPromise;
+
+  const usersResult = await pool.request()
+    .query(`
+      SELECT DISTINCT u.* FROM users u
+      JOIN servers s ON s.user_id = u.id
+      JOIN notification_settings ns ON ns.user_id = u.id
+      WHERE ns.daily_summary = 1 OR u.plan = 'pro'
+    `);
+
+  const users = usersResult.recordset;
 
   for (const user of users) {
-    const servers = db.prepare(`
-      SELECT * FROM servers WHERE user_id = ?
-    `).all(user.id);
+    const serversResult = await pool.request()
+      .input('userId', user.id)
+      .query('SELECT * FROM servers WHERE user_id = @userId');
+
+    const servers = serversResult.recordset;
 
     if (servers.length === 0) continue;
 
@@ -211,11 +253,20 @@ export const sendDailyStatusReport = async () => {
 
 // Manual trigger for testing
 export const sendTestEmail = async (userId) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  const pool = await poolPromise;
+  const userResult = await pool.request()
+    .input('userId', userId)
+    .query('SELECT * FROM users WHERE id = @userId');
+
+  const user = userResult.recordset[0];
   if (!user) return { error: 'User not found' };
 
-  const servers = db.prepare('SELECT * FROM servers WHERE user_id = ?').all(userId);
-  
+  const serversResult = await pool.request()
+    .input('userId', userId)
+    .query('SELECT * FROM servers WHERE user_id = @userId');
+
+  const servers = serversResult.recordset;
+
   const upServers = servers.filter(s => s.status === 'up');
   const downServers = servers.filter(s => s.status === 'down');
 

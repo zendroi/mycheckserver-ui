@@ -1,38 +1,52 @@
-import db from '../config/database.js';
+import { poolPromise } from '../config/db.js';
 
-export const getDashboardStats = (req, res) => {
+export const getDashboardStats = async (req, res) => {
   try {
     const userId = req.user.id;
+    const pool = await poolPromise;
 
-    const totalServers = db.prepare('SELECT COUNT(*) as count FROM servers WHERE user_id = ?').get(userId);
-    const upServers = db.prepare("SELECT COUNT(*) as count FROM servers WHERE user_id = ? AND status = 'up'").get(userId);
-    const downServers = db.prepare("SELECT COUNT(*) as count FROM servers WHERE user_id = ? AND status = 'down'").get(userId);
+    const totalServersResult = await pool.request()
+      .input('userId', userId)
+      .query('SELECT COUNT(*) as count FROM servers WHERE user_id = @userId');
 
-    const uptimeData = db.prepare(`
-      SELECT 
-        strftime('%H:00', sl.created_at) as time,
-        ROUND(AVG(CASE WHEN sl.status = 'up' THEN 100.0 ELSE 0.0 END), 1) as uptime
-      FROM server_logs sl
-      JOIN servers s ON sl.server_id = s.id
-      WHERE s.user_id = ? AND sl.created_at >= datetime('now', '-24 hours')
-      GROUP BY strftime('%H', sl.created_at)
-      ORDER BY sl.created_at
-    `).all(userId);
+    const upServersResult = await pool.request()
+      .input('userId', userId)
+      .query("SELECT COUNT(*) as count FROM servers WHERE user_id = @userId AND status = 'up'");
 
-    const recentNotifications = db.prepare(`
-      SELECT n.*, s.name as server_name
-      FROM notifications n
-      LEFT JOIN servers s ON n.server_id = s.id
-      WHERE n.user_id = ?
-      ORDER BY n.created_at DESC
-      LIMIT 5
-    `).all(userId);
+    const downServersResult = await pool.request()
+      .input('userId', userId)
+      .query("SELECT COUNT(*) as count FROM servers WHERE user_id = @userId AND status = 'down'");
+
+    const uptimeDataResult = await pool.request()
+      .input('userId', userId)
+      .query(`
+        SELECT 
+          FORMAT(sl.created_at, 'HH:00') as time,
+          ROUND(AVG(CASE WHEN sl.status = 'up' THEN 100.0 ELSE 0.0 END), 1) as uptime
+        FROM server_logs sl
+        JOIN servers s ON sl.server_id = s.id
+        WHERE s.user_id = @userId AND sl.created_at >= DATEADD(hour, -24, GETDATE())
+        GROUP BY FORMAT(sl.created_at, 'HH:00')
+        ORDER BY MIN(sl.created_at)
+      `);
+
+    const recentNotificationsResult = await pool.request()
+      .input('userId', userId)
+      .query(`
+        SELECT TOP 5 n.*, s.name as server_name
+        FROM notifications n
+        LEFT JOIN servers s ON n.server_id = s.id
+        WHERE n.user_id = @userId
+        ORDER BY n.created_at DESC
+      `);
+
+    const uptimeData = uptimeDataResult.recordset;
 
     res.json({
       stats: {
-        totalServers: totalServers.count,
-        upServers: upServers.count,
-        downServers: downServers.count,
+        totalServers: totalServersResult.recordset[0].count,
+        upServers: upServersResult.recordset[0].count,
+        downServers: downServersResult.recordset[0].count,
         plan: req.user.plan
       },
       uptimeData: uptimeData.length > 0 ? uptimeData : [
@@ -43,7 +57,7 @@ export const getDashboardStats = (req, res) => {
         { time: '16:00', uptime: 100 },
         { time: '20:00', uptime: 100 }
       ],
-      recentNotifications: recentNotifications.map(n => ({
+      recentNotifications: recentNotificationsResult.recordset.map(n => ({
         id: n.id,
         type: n.type,
         title: n.title,

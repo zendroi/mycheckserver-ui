@@ -1,9 +1,9 @@
 import jwt from 'jsonwebtoken';
-import db from '../config/database.js';
+import { poolPromise } from '../config/db.js';
 
-export const authenticate = (req, res, next) => {
+export const authenticate = async (req, res, next) => {
   const authHeader = req.headers.authorization;
-  
+
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Token tidak ditemukan' });
   }
@@ -12,8 +12,14 @@ export const authenticate = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = db.prepare('SELECT id, name, email, plan, plan_expires_at, email_verified, whatsapp, whatsapp_verified FROM users WHERE id = ?').get(decoded.userId);
-    
+    const pool = await poolPromise;
+
+    const result = await pool.request()
+      .input('userId', decoded.userId)
+      .query('SELECT id, name, email, plan, plan_expires_at, email_verified, whatsapp, whatsapp_verified FROM users WHERE id = @userId');
+
+    const user = result.recordset[0];
+
     if (!user) {
       return res.status(401).json({ error: 'User tidak ditemukan' });
     }
@@ -21,7 +27,10 @@ export const authenticate = (req, res, next) => {
     if (user.plan === 'pro' && user.plan_expires_at) {
       const expiresAt = new Date(user.plan_expires_at);
       if (expiresAt < new Date()) {
-        db.prepare('UPDATE users SET plan = ? WHERE id = ?').run('free', user.id);
+        await pool.request()
+          .input('plan', 'free')
+          .input('userId', user.id)
+          .query('UPDATE users SET plan = @plan WHERE id = @userId');
         user.plan = 'free';
       }
     }
@@ -29,6 +38,7 @@ export const authenticate = (req, res, next) => {
     req.user = user;
     next();
   } catch (error) {
+    console.error('Auth middleware error:', error);
     return res.status(401).json({ error: 'Token tidak valid' });
   }
 };

@@ -1,29 +1,35 @@
-import db from '../config/database.js';
+import { poolPromise } from '../config/db.js';
 
-export const getNotifications = (req, res) => {
+export const getNotifications = async (req, res) => {
   try {
     const userId = req.user.id;
     const { limit = 20, unreadOnly = false } = req.query;
+    const pool = await poolPromise;
 
     let query = `
-      SELECT n.*, s.name as server_name 
+      SELECT TOP (@limit) n.*, s.name as server_name 
       FROM notifications n
       LEFT JOIN servers s ON n.server_id = s.id
-      WHERE n.user_id = ?
+      WHERE n.user_id = @userId
     `;
-    
+
     if (unreadOnly === 'true') {
       query += ' AND n.read = 0';
     }
-    
-    query += ' ORDER BY n.created_at DESC LIMIT ?';
 
-    const notifications = db.prepare(query).all(userId, parseInt(limit));
+    query += ' ORDER BY n.created_at DESC';
 
-    const unreadCount = db.prepare('SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND read = 0').get(userId);
+    const result = await pool.request()
+      .input('userId', userId)
+      .input('limit', parseInt(limit))
+      .query(query);
+
+    const unreadCountResult = await pool.request()
+      .input('userId', userId)
+      .query('SELECT COUNT(*) as count FROM notifications WHERE user_id = @userId AND [read] = 0');
 
     res.json({
-      notifications: notifications.map(n => ({
+      notifications: result.recordset.map(n => ({
         id: n.id,
         type: n.type,
         title: n.title,
@@ -32,7 +38,7 @@ export const getNotifications = (req, res) => {
         read: !!n.read,
         createdAt: n.created_at
       })),
-      unreadCount: unreadCount.count
+      unreadCount: unreadCountResult.recordset[0].count
     });
   } catch (error) {
     console.error('Get notifications error:', error);
@@ -40,17 +46,24 @@ export const getNotifications = (req, res) => {
   }
 };
 
-export const markAsRead = (req, res) => {
+export const markAsRead = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
+    const pool = await poolPromise;
 
-    const notification = db.prepare('SELECT id FROM notifications WHERE id = ? AND user_id = ?').get(id, userId);
-    if (!notification) {
+    const notificationResult = await pool.request()
+      .input('id', id)
+      .input('userId', userId)
+      .query('SELECT id FROM notifications WHERE id = @id AND user_id = @userId');
+
+    if (notificationResult.recordset.length === 0) {
       return res.status(404).json({ error: 'Notifikasi tidak ditemukan' });
     }
 
-    db.prepare('UPDATE notifications SET read = 1 WHERE id = ?').run(id);
+    await pool.request()
+      .input('id', id)
+      .query('UPDATE notifications SET [read] = 1 WHERE id = @id');
 
     res.json({ message: 'Notifikasi ditandai sudah dibaca' });
   } catch (error) {
@@ -59,11 +72,14 @@ export const markAsRead = (req, res) => {
   }
 };
 
-export const markAllAsRead = (req, res) => {
+export const markAllAsRead = async (req, res) => {
   try {
     const userId = req.user.id;
+    const pool = await poolPromise;
 
-    db.prepare('UPDATE notifications SET read = 1 WHERE user_id = ?').run(userId);
+    await pool.request()
+      .input('userId', userId)
+      .query('UPDATE notifications SET [read] = 1 WHERE user_id = @userId');
 
     res.json({ message: 'Semua notifikasi ditandai sudah dibaca' });
   } catch (error) {
@@ -72,15 +88,27 @@ export const markAllAsRead = (req, res) => {
   }
 };
 
-export const getNotificationSettings = (req, res) => {
+export const getNotificationSettings = async (req, res) => {
   try {
     const userId = req.user.id;
+    const pool = await poolPromise;
 
-    let settings = db.prepare('SELECT * FROM notification_settings WHERE user_id = ?').get(userId);
-    
+    let settingsResult = await pool.request()
+      .input('userId', userId)
+      .query('SELECT * FROM notification_settings WHERE user_id = @userId');
+
+    let settings = settingsResult.recordset[0];
+
     if (!settings) {
-      db.prepare('INSERT INTO notification_settings (user_id) VALUES (?)').run(userId);
-      settings = db.prepare('SELECT * FROM notification_settings WHERE user_id = ?').get(userId);
+      await pool.request()
+        .input('userId', userId)
+        .query('INSERT INTO notification_settings (user_id) VALUES (@userId)');
+
+      settingsResult = await pool.request()
+        .input('userId', userId)
+        .query('SELECT * FROM notification_settings WHERE user_id = @userId');
+
+      settings = settingsResult.recordset[0];
     }
 
     res.json({
@@ -95,26 +123,36 @@ export const getNotificationSettings = (req, res) => {
   }
 };
 
-export const updateNotificationSettings = (req, res) => {
+export const updateNotificationSettings = async (req, res) => {
   try {
     const userId = req.user.id;
     const { serverDown, slowResponse, dailySummary, slowThreshold } = req.body;
+    const pool = await poolPromise;
 
-    db.prepare(`
-      UPDATE notification_settings SET
-        server_down = COALESCE(?, server_down),
-        slow_response = COALESCE(?, slow_response),
-        daily_summary = COALESCE(?, daily_summary),
-        slow_threshold = COALESCE(?, slow_threshold),
-        updated_at = CURRENT_TIMESTAMP
-      WHERE user_id = ?
-    `).run(
-      serverDown !== undefined ? (serverDown ? 1 : 0) : null,
-      slowResponse !== undefined ? (slowResponse ? 1 : 0) : null,
-      dailySummary !== undefined ? (dailySummary ? 1 : 0) : null,
-      slowThreshold || null,
-      userId
-    );
+    // Get current settings first to handle COALESCE logic in JS or use SQL COALESCE with parameters
+    // Using SQL COALESCE with parameters is cleaner but requires passing current values or NULL if undefined
+    // But here we can just pass the values directly if we construct the query carefully or just use the same logic as before
+
+    // However, T-SQL COALESCE works same way.
+    // We need to fetch current settings to know what to pass if undefined? No, we can pass NULL and let COALESCE handle it if we want to keep existing.
+    // But wait, if we pass NULL to COALESCE(param, column), it updates to column value (no change).
+    // So we need to pass NULL if the value is undefined in the request.
+
+    await pool.request()
+      .input('serverDown', serverDown !== undefined ? (serverDown ? 1 : 0) : null)
+      .input('slowResponse', slowResponse !== undefined ? (slowResponse ? 1 : 0) : null)
+      .input('dailySummary', dailySummary !== undefined ? (dailySummary ? 1 : 0) : null)
+      .input('slowThreshold', slowThreshold || null)
+      .input('userId', userId)
+      .query(`
+        UPDATE notification_settings SET
+          server_down = COALESCE(@serverDown, server_down),
+          slow_response = COALESCE(@slowResponse, slow_response),
+          daily_summary = COALESCE(@dailySummary, daily_summary),
+          slow_threshold = COALESCE(@slowThreshold, slow_threshold),
+          updated_at = GETDATE()
+        WHERE user_id = @userId
+      `);
 
     res.json({ message: 'Pengaturan notifikasi berhasil diperbarui' });
   } catch (error) {
@@ -123,19 +161,23 @@ export const updateNotificationSettings = (req, res) => {
   }
 };
 
-export const updateWhatsapp = (req, res) => {
+export const updateWhatsapp = async (req, res) => {
   try {
     const { whatsapp } = req.body;
     const userId = req.user.id;
+    const pool = await poolPromise;
 
     if (req.user.plan !== 'pro') {
       return res.status(403).json({ error: 'Fitur WhatsApp hanya untuk pengguna Pro' });
     }
 
-    db.prepare(`
-      UPDATE users SET whatsapp = ?, whatsapp_verified = 0, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(whatsapp, userId);
+    await pool.request()
+      .input('whatsapp', whatsapp)
+      .input('userId', userId)
+      .query(`
+        UPDATE users SET whatsapp = @whatsapp, whatsapp_verified = 0, updated_at = GETDATE()
+        WHERE id = @userId
+      `);
 
     res.json({ message: 'Nomor WhatsApp berhasil disimpan' });
   } catch (error) {
