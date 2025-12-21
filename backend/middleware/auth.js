@@ -16,7 +16,7 @@ export const authenticate = async (req, res, next) => {
 
     const result = await pool.request()
       .input('userId', decoded.userId)
-      .query('SELECT id, name, email, plan, plan_expires_at, email_verified, whatsapp, whatsapp_verified FROM users WHERE id = @userId');
+      .query('SELECT id, name, email, [plan], plan_expires_at, email_verified, whatsapp, whatsapp_verified FROM users WHERE id = @userId');
 
     const user = result.recordset[0];
 
@@ -30,7 +30,7 @@ export const authenticate = async (req, res, next) => {
         await pool.request()
           .input('plan', 'free')
           .input('userId', user.id)
-          .query('UPDATE users SET plan = @plan WHERE id = @userId');
+          .query('UPDATE users SET [plan] = @plan WHERE id = @userId');
         user.plan = 'free';
       }
     }
