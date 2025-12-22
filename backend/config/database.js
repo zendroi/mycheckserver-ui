@@ -136,7 +136,11 @@ const wrapper = {
         if (!db) throw new Error('Database not initialized');
         db.run(sql, params);
         save();
-        const lastId = db.exec("SELECT last_insert_rowid()")[0]?.values[0]?.[0] || 0;
+        // Get last insert rowid using prepared statement
+        const stmt = db.prepare("SELECT last_insert_rowid() as id");
+        stmt.step();
+        const lastId = stmt.getAsObject().id || 0;
+        stmt.free();
         return { changes: db.getRowsModified(), lastInsertRowid: lastId };
       },
       get(...params) {
