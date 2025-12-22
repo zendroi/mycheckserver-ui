@@ -95,7 +95,10 @@ const createRequest = () => {
             
             for (const part of parts) {
               if (part.toUpperCase().startsWith('INSERT')) {
-                const result = db.prepare(part).run(...paramValues);
+                // Count how many ? are in this part to know how many params to use
+                const paramCount = (part.match(/\?/g) || []).length;
+                const insertParams = paramValues.slice(0, paramCount);
+                const result = db.prepare(part).run(...insertParams);
                 lastId = result.lastInsertRowid;
               } else if (part.toUpperCase().startsWith('SELECT') && part.includes('last_insert_rowid()')) {
                 return { recordset: [{ id: lastId }] };
