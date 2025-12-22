@@ -1,13 +1,13 @@
 pipeline {
-    agent any
+    agent {
+        docker {
+            image 'node:20-alpine'
+            args '-u root'
+        }
+    }
     
     environment {
         AZURE_WEBAPP_NAME = 'mycheckserver-app'
-        AZURE_RESOURCE_GROUP = 'TubesCloud'
-    }
-    
-    tools {
-        nodejs 'NodeJS-20'
     }
     
     stages {
@@ -21,7 +21,7 @@ pipeline {
             steps {
                 sh 'npm ci'
                 dir('backend') {
-                    sh 'npm ci'
+                    sh 'npm ci --ignore-scripts'
                 }
             }
         }
@@ -42,9 +42,7 @@ pipeline {
                     rm -rf deploy/node_modules deploy/data.db*
                 '''
                 
-                // Create unified server
-                writeFile file: 'deploy/server.js', text: """
-import express from 'express';
+                writeFile file: 'deploy/server.js', text: '''import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import cors from 'cors';
@@ -77,7 +75,7 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => console.log('Server running on port ' + PORT));
-"""
+'''
                 
                 writeFile file: 'deploy/package.json', text: '''{
   "name": "mycheckserver",
@@ -100,20 +98,22 @@ app.listen(PORT, () => console.log('Server running on port ' + PORT));
   "engines": { "node": ">=18.0.0" }
 }'''
                 
+                sh 'apk add --no-cache zip curl'
                 sh 'cd deploy && zip -r ../deploy.zip .'
             }
         }
         
         stage('Deploy to Azure') {
             steps {
-                withCredentials([azureServicePrincipal('azure-sp-credentials')]) {
+                withCredentials([string(credentialsId: 'azure-publish-profile', variable: 'PUBLISH_PROFILE')]) {
                     sh '''
-                        az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET -t $AZURE_TENANT_ID
-                        az webapp deployment source config-zip \
-                            --resource-group $AZURE_RESOURCE_GROUP \
-                            --name $AZURE_WEBAPP_NAME \
-                            --src deploy.zip
-                        az logout
+                        USER=$(echo "$PUBLISH_PROFILE" | grep -oP 'userName="\\K[^"]+' | head -1)
+                        PASS=$(echo "$PUBLISH_PROFILE" | grep -oP 'userPWD="\\K[^"]+' | head -1)
+                        
+                        curl -X POST \
+                            -u "$USER:$PASS" \
+                            --data-binary @deploy.zip \
+                            "https://${AZURE_WEBAPP_NAME}.scm.azurewebsites.net/api/zipdeploy"
                     '''
                 }
             }
