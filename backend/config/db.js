@@ -21,7 +21,35 @@ function convertQuery(sqlQuery) {
   query = query.replace(/FORMAT\s*\(\s*(\w+(?:\.\w+)?)\s*,\s*'HH:00'\s*\)/gi, 
     (match, col) => `strftime('%H:00', ${col})`);
   
+  // Convert SELECT TOP N ... to SELECT ... LIMIT N (SQL Server to SQLite)
+  // Handle both numeric TOP (TOP 20) and parameterized TOP (TOP (@limit))
+  let topValue = null;
+  
+  // Check for numeric TOP
+  const numericTopMatch = sqlQuery.match(/SELECT\s+TOP\s+(\d+)\s+/i);
+  if (numericTopMatch) {
+    topValue = numericTopMatch[1];
+    query = query.replace(/SELECT\s+TOP\s+\d+\s+/gi, 'SELECT ');
+  }
+  
+  // Check for parameterized TOP like TOP (@limit)
+  const paramTopMatch = sqlQuery.match(/SELECT\s+TOP\s+\(\s*@(\w+)\s*\)\s+/i);
+  if (paramTopMatch) {
+    topValue = `@${paramTopMatch[1]}`;
+    query = query.replace(/SELECT\s+TOP\s+\(\s*@\w+\s*\)\s+/gi, 'SELECT ');
+  }
+  
+  // Add LIMIT at the end if TOP was used
+  if (topValue) {
+    // Remove any existing LIMIT clause first
+    query = query.replace(/\s+LIMIT\s+(?:\d+|@\w+|\?)\s*$/i, '');
+    query = query.trimEnd() + ` LIMIT ${topValue}`;
+  }
+  
   // Replace COALESCE - SQLite supports this natively, no change needed
+  
+  // Convert SQL Server bracket notation [column] to just column (SQLite doesn't need escaping for 'read')
+  query = query.replace(/\[(\w+)\]/g, '$1');
   
   return query;
 }
