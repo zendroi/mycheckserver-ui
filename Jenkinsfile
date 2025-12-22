@@ -21,7 +21,7 @@ pipeline {
             steps {
                 sh 'npm ci'
                 dir('backend') {
-                    sh 'npm ci --ignore-scripts'
+                    sh 'npm ci'
                 }
             }
         }
@@ -41,7 +41,7 @@ pipeline {
                     mkdir -p deploy/public
                     cp -r dist/* deploy/public/
                     cp -r backend/* deploy/
-                    rm -rf deploy/node_modules deploy/data.db*
+                    rm -rf deploy/data.db*
                     
                     cat > deploy/server.js << 'EOF'
 import express from 'express';
@@ -61,6 +61,10 @@ const PORT = process.env.PORT || 8080;
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Wait for database to initialize
+import { init } from './config/database.js';
+await init;
 
 import authRoutes from './routes/auth.js';
 import serverRoutes from './routes/servers.js';
@@ -88,7 +92,6 @@ EOF
   "scripts": { "start": "node server.js" },
   "dependencies": {
     "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^9.6.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
@@ -96,6 +99,7 @@ EOF
     "midtrans-client": "^1.3.1",
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.14",
+    "sql.js": "^1.13.0",
     "uuid": "^10.0.0"
   },
   "engines": { "node": ">=18.0.0" }
