@@ -35,14 +35,16 @@ pipeline {
         stage('Prepare Deployment') {
             steps {
                 sh '''
+                    apk add --no-cache zip curl grep
+                    
                     rm -rf deploy deploy.zip
                     mkdir -p deploy/public
                     cp -r dist/* deploy/public/
                     cp -r backend/* deploy/
                     rm -rf deploy/node_modules deploy/data.db*
-                '''
-                
-                writeFile file: 'deploy/server.js', text: '''import express from 'express';
+                    
+                    cat > deploy/server.js << 'EOF'
+import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import cors from 'cors';
@@ -75,9 +77,10 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => console.log('Server running on port ' + PORT));
-'''
-                
-                writeFile file: 'deploy/package.json', text: '''{
+EOF
+
+                    cat > deploy/package.json << 'EOF'
+{
   "name": "mycheckserver",
   "version": "1.0.0",
   "type": "module",
@@ -96,10 +99,11 @@ app.listen(PORT, () => console.log('Server running on port ' + PORT));
     "uuid": "^10.0.0"
   },
   "engines": { "node": ">=18.0.0" }
-}'''
-                
-                sh 'apk add --no-cache zip curl'
-                sh 'cd deploy && zip -r ../deploy.zip .'
+}
+EOF
+
+                    cd deploy && zip -r ../deploy.zip .
+                '''
             }
         }
         
