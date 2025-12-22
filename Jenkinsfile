@@ -28,7 +28,7 @@ pipeline {
         
         stage('Build Frontend') {
             steps {
-                sh 'npm run build'
+                sh 'VITE_API_URL=/api npm run build'
             }
         }
         
