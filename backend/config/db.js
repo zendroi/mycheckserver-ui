@@ -1,7 +1,7 @@
 import db, { init } from './database.js';
 
-// Wait for database initialization
-await init;
+// Database initialization promise
+let dbReady = init;
 
 // Convert SQL Server syntax to SQLite
 function convertQuery(sqlQuery) {
@@ -36,6 +36,9 @@ const createRequest = () => {
       return this;
     },
     async query(sqlQuery) {
+      // Wait for database to be ready
+      await dbReady;
+      
       // Convert SQL Server syntax to SQLite
       let processedQuery = convertQuery(sqlQuery);
       
