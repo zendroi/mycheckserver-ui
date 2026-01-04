@@ -1,19 +1,32 @@
 pipeline {
-    agent {
-        docker {
-            image 'node:20-alpine'
-            args '-u root'
-        }
-    }
+    agent any
     
     environment {
         AZURE_WEBAPP_NAME = 'mycheckserver-app'
+        NVM_DIR = '/var/lib/jenkins/.nvm'
     }
     
     stages {
         stage('Checkout') {
             steps {
                 checkout scm
+            }
+        }
+        
+        stage('Setup Node.js') {
+            steps {
+                sh '''
+                    # Install nvm and Node.js if not present
+                    if [ ! -d "$NVM_DIR" ]; then
+                        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+                    fi
+                    export NVM_DIR="/var/lib/jenkins/.nvm"
+                    [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+                    nvm install 20 || true
+                    nvm use 20
+                    node --version
+                    npm --version
+                '''
             }
         }
         
@@ -35,13 +48,11 @@ pipeline {
         stage('Prepare Deployment') {
             steps {
                 sh '''
-                    apk add --no-cache zip curl grep
-                    
                     rm -rf deploy deploy.zip
                     mkdir -p deploy/public
                     cp -r dist/* deploy/public/
                     cp -r backend/* deploy/
-                    rm -rf deploy/data.db*
+                    rm -rf deploy/data.db* deploy/node_modules
                     
                     cat > deploy/server.js << 'EOF'
 import express from 'express';
@@ -107,9 +118,9 @@ EOF
     "express": "^4.21.0",
     "jsonwebtoken": "^9.0.2",
     "midtrans-client": "^1.3.1",
+    "mysql2": "^3.16.0",
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.14",
-    "sql.js": "^1.13.0",
     "uuid": "^10.0.0"
   },
   "engines": { "node": ">=18.0.0" }

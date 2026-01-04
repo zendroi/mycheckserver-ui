@@ -1,100 +1,253 @@
-import Database from 'better-sqlite3';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import mysql from 'mysql2/promise';
+import dotenv from 'dotenv';
+dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// Create pool connection with SSL for Azure MySQL
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'mycheckserver',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+  // Enable SSL for Azure MySQL Flexible Server
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
+});
 
-const db = new Database(join(__dirname, '../data.db'));
+// Initialize database tables
+const initDatabase = async () => {
+  const connection = await pool.getConnection();
 
-db.pragma('journal_mode = WAL');
+  try {
+    // Create users table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        role VARCHAR(50) DEFAULT 'user',
+        plan VARCHAR(50) DEFAULT 'free',
+        plan_expires_at DATETIME,
+        email_verified TINYINT DEFAULT 0,
+        whatsapp VARCHAR(50),
+        whatsapp_verified TINYINT DEFAULT 0,
+        google_id VARCHAR(255),
+        avatar TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    plan TEXT DEFAULT 'free',
-    plan_expires_at TEXT,
-    email_verified INTEGER DEFAULT 0,
-    whatsapp TEXT,
-    whatsapp_verified INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-  );
+    // Create servers table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS servers (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        domain VARCHAR(255) NOT NULL,
+        \`interval\` INT DEFAULT 5,
+        email_notif TINYINT DEFAULT 1,
+        whatsapp_notif TINYINT DEFAULT 0,
+        status VARCHAR(50) DEFAULT 'unknown',
+        response_time INT,
+        last_check DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
 
-  CREATE TABLE IF NOT EXISTS servers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    domain TEXT NOT NULL,
-    interval INTEGER DEFAULT 5,
-    email_notif INTEGER DEFAULT 1,
-    whatsapp_notif INTEGER DEFAULT 0,
-    status TEXT DEFAULT 'unknown',
-    last_check TEXT,
-    response_time INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
+    // Create server_logs table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS server_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        server_id INT NOT NULL,
+        status_code INT,
+        response_time INT,
+        status VARCHAR(50),
+        message TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
+      )
+    `);
 
-  CREATE TABLE IF NOT EXISTS server_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    server_id INTEGER NOT NULL,
-    status_code INTEGER,
-    response_time INTEGER,
-    status TEXT,
-    message TEXT,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
-  );
+    // Create notifications table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        server_id INT,
+        type VARCHAR(50),
+        title VARCHAR(255),
+        message TEXT,
+        \`read\` TINYINT DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE SET NULL
+      )
+    `);
 
-  CREATE TABLE IF NOT EXISTS payments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    order_id TEXT UNIQUE NOT NULL,
-    transaction_id TEXT,
-    amount INTEGER NOT NULL,
-    plan TEXT NOT NULL,
-    status TEXT DEFAULT 'pending',
-    payment_type TEXT,
-    midtrans_response TEXT,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
+    // Create notification_settings table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS notification_settings (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT UNIQUE NOT NULL,
+        email_enabled TINYINT DEFAULT 1,
+        whatsapp_enabled TINYINT DEFAULT 0,
+        notify_down TINYINT DEFAULT 1,
+        notify_up TINYINT DEFAULT 1,
+        daily_summary TINYINT DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
 
-  CREATE TABLE IF NOT EXISTS notifications (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    server_id INTEGER,
-    type TEXT NOT NULL,
-    title TEXT NOT NULL,
-    message TEXT NOT NULL,
-    read INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE SET NULL
-  );
+    // Create payments table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS payments (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        order_id VARCHAR(255) UNIQUE NOT NULL,
+        amount DECIMAL(12,2) NOT NULL,
+        plan VARCHAR(50) DEFAULT 'pro',
+        status VARCHAR(50) DEFAULT 'pending',
+        payment_type VARCHAR(50),
+        transaction_id VARCHAR(255),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
 
-  CREATE TABLE IF NOT EXISTS notification_settings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER UNIQUE NOT NULL,
-    server_down INTEGER DEFAULT 1,
-    slow_response INTEGER DEFAULT 1,
-    daily_summary INTEGER DEFAULT 0,
-    slow_threshold INTEGER DEFAULT 3000,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
+    // Create page_visits table for visitor tracking
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS page_visits (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        path VARCHAR(255) NOT NULL,
+        ip_address VARCHAR(50),
+        user_agent TEXT,
+        user_id INT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+      )
+    `);
 
-  CREATE INDEX IF NOT EXISTS idx_servers_user ON servers(user_id);
-  CREATE INDEX IF NOT EXISTS idx_server_logs_server ON server_logs(server_id);
-  CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id);
-  CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
-`);
+    console.log('Database tables initialized');
+  } finally {
+    connection.release();
+  }
+};
 
-export default db;
+// Create request wrapper for mssql-compatible API
+const createRequest = () => {
+  const params = {};
+
+  return {
+    input(name, value) {
+      params[name] = value;
+      return this;
+    },
+    async query(sqlQuery) {
+      // Convert @paramName to ? and collect values
+      const paramOrder = [];
+      const processedQuery = sqlQuery.replace(/@(\w+)/g, (match, name) => {
+        paramOrder.push(name);
+        return '?';
+      });
+
+      const paramValues = paramOrder.map(name => params[name]);
+
+      // Convert some SQL Server syntax to MySQL
+      let query = processedQuery;
+
+      // Convert GETDATE() to NOW()
+      query = query.replace(/GETDATE\(\)/gi, 'NOW()');
+
+      // Convert SCOPE_IDENTITY() to LAST_INSERT_ID()
+      query = query.replace(/SCOPE_IDENTITY\(\)/gi, 'LAST_INSERT_ID()');
+
+      // Convert TOP N to LIMIT N
+      const topMatch = query.match(/SELECT\s+TOP\s+(\d+)\s+/i);
+      if (topMatch) {
+        const limit = topMatch[1];
+        query = query.replace(/SELECT\s+TOP\s+\d+\s+/i, 'SELECT ');
+        query = query.trimEnd() + ` LIMIT ${limit}`;
+      }
+
+      // Convert FORMAT(date, 'HH:00') to DATE_FORMAT(date, '%H:00')
+      query = query.replace(/FORMAT\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)\s*,\s*'HH:00'\s*\)/gi,
+        (match, col) => `DATE_FORMAT(${col}, '%H:00')`);
+
+      // Convert DATEADD(hour, N, date) to DATE_ADD(date, INTERVAL N HOUR)
+      query = query.replace(/DATEADD\s*\(\s*hour\s*,\s*(-?\d+)\s*,\s*([a-zA-Z_][a-zA-Z0-9_()'.']*)\s*\)/gi,
+        (match, hours, date) => `DATE_ADD(${date}, INTERVAL ${hours} HOUR)`);
+
+      // Convert DATEADD(minute, col, col2) to DATE_ADD(col2, INTERVAL col MINUTE)
+      query = query.replace(/DATEADD\s*\(\s*minute\s*,\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*,\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*\)/gi,
+        (match, minutes, col) => `DATE_ADD(${col}, INTERVAL ${minutes} MINUTE)`);
+
+      // Protect INTERVAL keyword
+      const intervalToken = '___INTERVAL_KEYWORD___';
+      query = query.replace(/\bINTERVAL\s+(?=\S+\s+(?:DAY|HOUR|MINUTE|SECOND|MONTH|YEAR|WEEK))/gi, `${intervalToken} `);
+
+      // Escape 'interval' column name
+      query = query.replace(/\binterval\b/gi, '`interval`');
+
+      // Escape 'read' column name
+      query = query.replace(/\bread\b/gi, '`read`');
+
+      // Restore INTERVAL keyword
+      query = query.replace(new RegExp(intervalToken, 'g'), 'INTERVAL');
+
+      // Handle multi-statement queries
+      if (query.includes(';')) {
+        const statements = query.split(';').map(s => s.trim()).filter(s => s.length > 0);
+        if (statements.length >= 1 && statements[0].toUpperCase().startsWith('INSERT')) {
+          query = statements[0];
+        }
+      }
+
+      try {
+        const [rows] = await pool.execute(query, paramValues);
+
+        if (query.trim().toUpperCase().startsWith('SELECT')) {
+          return { recordset: rows };
+        } else if (query.trim().toUpperCase().startsWith('INSERT')) {
+          return {
+            recordset: [{ id: rows.insertId }],
+            rowsAffected: [rows.affectedRows],
+            lastInsertRowid: rows.insertId
+          };
+        } else {
+          return { recordset: [], rowsAffected: [rows.affectedRows] };
+        }
+      } catch (error) {
+        console.error('SQL Error:', error.message);
+        console.error('Query:', query);
+        throw error;
+      }
+    }
+  };
+};
+
+const poolPromise = Promise.resolve({
+  request: createRequest
+});
+
+// Initialize database on startup
+const init = initDatabase().catch(err => {
+  console.error('Database initialization failed:', err);
+});
+
+// Dummy sql object for compatibility
+const sql = {
+  Int: 'Int',
+  NVarChar: 'NVarChar',
+  DateTime: 'DateTime',
+  Bit: 'Bit'
+};
+
+export { sql, poolPromise, init };
