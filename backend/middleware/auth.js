@@ -30,7 +30,7 @@ export const authenticate = async (req, res, next) => {
         await pool.request()
           .input('plan', 'free')
           .input('userId', user.id)
-          .query('UPDATE users SET plan = @plan WHERE id = @userId');
+          .query('UPDATE users SET [plan] = @plan WHERE id = @userId');
         user.plan = 'free';
       }
     }
