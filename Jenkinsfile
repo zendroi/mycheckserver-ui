@@ -73,12 +73,17 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 async function startServer() {
   try {
     // Wait for database to initialize
-    const { init } = await import('./config/database.js');
-    await init;
-    console.log('Database initialized');
+    const { poolPromise } = await import('./config/db.js');
+    await poolPromise;
+    console.log('Database connected');
 
     const authRoutes = (await import('./routes/auth.js')).default;
     const serverRoutes = (await import('./routes/servers.js')).default;
