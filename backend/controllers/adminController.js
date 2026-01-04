@@ -1,4 +1,4 @@
-import { poolPromise } from '../config/db.js';
+import { poolPromise } from '../config/azure-db.js';
 
 // Get all users with subscription status
 export const getUsers = async (req, res) => {

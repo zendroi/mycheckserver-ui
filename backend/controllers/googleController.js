@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { poolPromise } from '../config/db.js';
+import { poolPromise } from '../config/azure-db.js';
 
 // Handle Google OAuth callback
 export const googleCallback = async (req, res) => {

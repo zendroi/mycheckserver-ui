@@ -1,4 +1,4 @@
-import { poolPromise } from '../config/db.js';
+import { poolPromise } from '../config/azure-db.js';
 import { createTransaction, verifyNotification, checkTransactionStatus } from '../services/midtransService.js';
 import { v4 as uuidv4 } from 'uuid';
 

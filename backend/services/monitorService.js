@@ -1,4 +1,4 @@
-import { poolPromise } from '../config/db.js';
+import { poolPromise } from '../config/azure-db.js';
 import { sendEmail } from './emailService.js';
 
 const DAILY_REPORT_HOURS = [8, 14, 20]; // Kirim report jam 8 pagi, 2 siang, 8 malam

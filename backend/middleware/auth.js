@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { poolPromise } from '../config/db.js';
+import { poolPromise } from '../config/azure-db.js';
 
 export const authenticate = async (req, res, next) => {
   const authHeader = req.headers.authorization;

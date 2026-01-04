@@ -1,4 +1,4 @@
-import { poolPromise } from '../config/db.js';
+import { poolPromise } from '../config/azure-db.js';
 
 // Middleware to track page visits
 export const trackVisitor = async (req, res, next) => {
