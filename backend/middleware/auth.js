@@ -16,7 +16,7 @@ export const authenticate = async (req, res, next) => {
 
     const result = await pool.request()
       .input('userId', decoded.userId)
-      .query('SELECT id, name, email, role, plan, plan_expires_at, email_verified, whatsapp, whatsapp_verified, google_id, avatar FROM users WHERE id = @userId');
+      .query('SELECT id, name, email, role, [plan], plan_expires_at, email_verified, whatsapp, whatsapp_verified, google_id, avatar FROM users WHERE id = @userId');
 
     const user = result.recordset[0];
 
