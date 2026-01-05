@@ -107,11 +107,12 @@ const initDb = async () => {
     `);
 
     console.log('Schema initialization completed successfully.');
-    process.exit(0);
+    // process.exit(0); // Removed for runtime usage
   } catch (error) {
     console.error('Schema initialization failed:', error);
-    process.exit(1);
+    // process.exit(1); // Removed for runtime usage
+    throw error; // Re-throw to handle in main app
   }
 };
 
-initDb();
+export { initDb };

@@ -95,15 +95,24 @@ cron.schedule('* * * * *', async () => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`
-  ╔══════════════════════════════════════════════╗
-  ║     MyCheckServer Backend is running!        ║
-  ║                                              ║
-  ║     Port: ${PORT}                              ║
-  ║     Mode: ${process.env.NODE_ENV || 'development'}                      ║
-  ║                                              ║
-  ║     Midtrans: ${process.env.MIDTRANS_IS_PRODUCTION === 'true' ? 'Production' : 'Sandbox'}                     ║
-  ╚══════════════════════════════════════════════╝
-  `);
+import { initDb } from './scripts/init-db.js';
+
+// ... (existing code)
+
+// Initialize DB then start server
+initDb().then(() => {
+  app.listen(PORT, () => {
+    console.log(`
+    ╔══════════════════════════════════════════════╗
+    ║     MyCheckServer Backend is running!        ║
+    ║                                              ║
+    ║     Port: ${PORT}                              ║
+    ║     Mode: ${process.env.NODE_ENV || 'development'}                      ║
+    ║                                              ║
+    ║     Midtrans: ${process.env.MIDTRANS_IS_PRODUCTION === 'true' ? 'Production' : 'Sandbox'}                     ║
+    ╚══════════════════════════════════════════════╝
+    `);
+  });
+}).catch(err => {
+  console.error('Failed to initialize database:', err);
 });
