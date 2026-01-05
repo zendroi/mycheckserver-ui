@@ -9,7 +9,8 @@ import { Activity } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+const API_URL = isLocal ? 'http://localhost:3001' : '';
 const GOOGLE_CLIENT_ID = '847911456072-c9en2n9lop6ukf5ht2lnla86qh9pmons.apps.googleusercontent.com';
 
 declare global {
