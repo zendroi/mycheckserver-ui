@@ -1,6 +1,6 @@
 const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-// Force relative path in production execution (regardless of build-time vars)
-const API_URL = import.meta.env.PROD ? '/api' : (import.meta.env.VITE_API_URL || 'http://localhost:3001/api');
+// Strictly use relative environment for non-localhost (Production) to treat 'localhost' leakage
+const API_URL = isLocal ? 'http://localhost:3001/api' : '/api';
 
 class ApiService {
   private token: string | null = null;
