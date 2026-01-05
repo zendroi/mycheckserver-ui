@@ -59,8 +59,10 @@ export const register = async (req, res) => {
 export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
+    console.log(`[LOGIN ATTEMPT] Email: ${email}`);
 
     if (!email || !password) {
+      console.log('[LOGIN FAIL] Missing email or password');
       return res.status(400).json({ error: 'Email dan password wajib diisi' });
     }
 
@@ -69,14 +71,20 @@ export const login = async (req, res) => {
       .input('email', email)
       .query('SELECT * FROM users WHERE email = @email');
 
+    console.log(`[LOGIN DB] Found ${result.recordset.length} users with this email`);
+
     const user = result.recordset[0];
 
     if (!user) {
+      console.log('[LOGIN FAIL] User not found');
       return res.status(401).json({ error: 'Email atau password salah' });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
+    console.log(`[LOGIN PASS] Password match: ${isMatch}`);
+
     if (!isMatch) {
+      console.log('[LOGIN FAIL] Password mismatch');
       return res.status(401).json({ error: 'Email atau password salah' });
     }
 
@@ -85,6 +93,8 @@ export const login = async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
+
+    console.log('[LOGIN SUCCESS] Token generated');
 
     res.json({
       message: 'Login berhasil',
